@@ -95,6 +95,5 @@ async def recommend(request: RecommendRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    # CRITICAL FIX: Use PORT environment variable for Render
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)

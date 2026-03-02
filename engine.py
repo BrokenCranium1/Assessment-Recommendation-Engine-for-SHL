@@ -9,6 +9,9 @@ from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 import json
 
+# Force CPU mode to prevent GPU memory usage
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -24,16 +27,30 @@ class RecommendationEngine:
         tokenized_corpus = [doc.lower().split() for doc in self.df['combined_text'].tolist()]
         self.bm25 = BM25Okapi(tokenized_corpus)
         
-        # Initialize Embeddings (using a local model for speed/cost, can switch to Gemini for final)
-        self.embed_model = SentenceTransformer('all-MiniLM-L6-v2')
-        self.embeddings = self.embed_model.encode(self.df['combined_text'].tolist(), show_progress_bar=True)
+        # Initialize Embeddings - USING SMALLER MODEL FOR RENDER FREE TIER
+        # Changed from 'all-MiniLM-L6-v2' (80MB) to 'paraphrase-albert-small-v2' (43MB)
+        logger.info("Loading smaller model to fit in 512MB memory limit...")
+        self.embed_model = SentenceTransformer('paraphrase-albert-small-v2')
+        
+        # Process in smaller batches to reduce memory spike
+        batch_size = 32
+        all_embeddings = []
+        texts = self.df['combined_text'].tolist()
+        
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i+batch_size]
+            batch_embeddings = self.embed_model.encode(batch, show_progress_bar=False)
+            all_embeddings.append(batch_embeddings)
+            logger.info(f"Processed batch {i//batch_size + 1}/{(len(texts)-1)//batch_size + 1}")
+        
+        self.embeddings = np.vstack(all_embeddings)
         
         # Initialize FAISS index
         dimension = self.embeddings.shape[1]
         self.index = faiss.IndexFlatL2(dimension)
         self.index.add(np.array(self.embeddings).astype('float32'))
         
-        logger.info(f"Engine initialized with {len(self.df)} records.")
+        logger.info(f"Engine initialized with {len(self.df)} records using {self.embeddings.nbytes / 1024 / 1024:.2f}MB for embeddings.")
 
     def search(self, query: str, top_k: int = 20) -> List[Dict[str, Any]]:
         # 1. Semantic Search (Dense)
