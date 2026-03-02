@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+pandas
+numpy
+sentence-transformers
+faiss-cpu
+rank_bm25
+openpyxl
+google-generativeai
+pydantic
+python-multipart
