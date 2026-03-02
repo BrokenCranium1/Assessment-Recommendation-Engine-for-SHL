@@ -11,6 +11,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="SHL Assessment Recommendation API")
+print(f"Starting server on port: {os.getenv('PORT', '8000')}")
+print(f"Binding to host: 0.0.0.0")
 
 # Add CORS Middleware
 app.add_middleware(
