@@ -23,25 +23,39 @@ class RecommendationEngine:
         self.df['description'] = self.df['description'].fillna('')
         self.df['combined_text'] = self.df['name'] + " " + self.df['description'] + " " + self.df['test_type']
         
-        # Initialize BM25 for keyword search
+        # Initialize BM25 for keyword search (lightweight)
         tokenized_corpus = [doc.lower().split() for doc in self.df['combined_text'].tolist()]
         self.bm25 = BM25Okapi(tokenized_corpus)
         
-        # Initialize Embeddings - USING SMALLER MODEL FOR RENDER FREE TIER
-        # Changed from 'all-MiniLM-L6-v2' (80MB) to 'paraphrase-albert-small-v2' (43MB)
-        logger.info("Loading smaller model to fit in 512MB memory limit...")
+        # CRITICAL FIX: Don't load model at startup - lazy load on first request
+        self.embed_model = None
+        self.embeddings = None
+        self.index = None
+        self._model_loaded = False
+        
+        logger.info(f"Engine initialized with {len(self.df)} records. Model will load on first request.")
+
+    def _lazy_load_model(self):
+        """Load model and create embeddings only when first needed"""
+        if self._model_loaded:
+            return
+            
+        logger.info("🔄 Lazy-loading model on first request (this may take 5-10 seconds)...")
+        
+        # Load the small model
         self.embed_model = SentenceTransformer('paraphrase-albert-small-v2')
         
-        # Process in smaller batches to reduce memory spike
-        batch_size = 32
+        # Process in very small batches to manage memory
+        batch_size = 16  # Smaller batches = less memory spike
         all_embeddings = []
         texts = self.df['combined_text'].tolist()
+        total_batches = (len(texts) - 1) // batch_size + 1
         
         for i in range(0, len(texts), batch_size):
             batch = texts[i:i+batch_size]
             batch_embeddings = self.embed_model.encode(batch, show_progress_bar=False)
             all_embeddings.append(batch_embeddings)
-            logger.info(f"Processed batch {i//batch_size + 1}/{(len(texts)-1)//batch_size + 1}")
+            logger.info(f"  Processed batch {i//batch_size + 1}/{total_batches}")
         
         self.embeddings = np.vstack(all_embeddings)
         
@@ -50,9 +64,14 @@ class RecommendationEngine:
         self.index = faiss.IndexFlatL2(dimension)
         self.index.add(np.array(self.embeddings).astype('float32'))
         
-        logger.info(f"Engine initialized with {len(self.df)} records using {self.embeddings.nbytes / 1024 / 1024:.2f}MB for embeddings.")
+        self._model_loaded = True
+        memory_used = self.embeddings.nbytes / 1024 / 1024
+        logger.info(f"✅ Model loading complete. Embeddings use {memory_used:.2f}MB.")
 
     def search(self, query: str, top_k: int = 20) -> List[Dict[str, Any]]:
+        # Ensure model is loaded before searching
+        self._lazy_load_model()
+        
         # 1. Semantic Search (Dense)
         query_embedding = self.embed_model.encode([query])
         distances, indices = self.index.search(np.array(query_embedding).astype('float32'), top_k)
