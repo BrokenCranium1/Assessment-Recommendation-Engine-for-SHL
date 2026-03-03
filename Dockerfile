@@ -14,9 +14,10 @@ COPY .python-version .
 COPY railpack.json .
 COPY railway.json .
 
-# Create data directory and copy ALL CSV files
+# Create data directory and copy ALL CSV files AND PKL files
 RUN mkdir -p /app/data
 COPY data/*.csv /app/data/
+COPY data/*.pkl /app/data/   # ← ADD THIS LINE!
 
 # Verify the files exist
 RUN ls -la /app/data/
