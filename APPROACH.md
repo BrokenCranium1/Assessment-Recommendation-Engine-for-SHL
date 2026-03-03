@@ -14,10 +14,10 @@ Our objective was to build an intelligent, end-to-end recommendation system that
 ### 2.1 High-Level Design
 The system implements a modern **Hybrid Retrieval-Augmented Generation (RAG)** framework. This architecture ensures that results are both contextually relevant (via embeddings) and precise (via keyword matching).
 
-1.  **Data Layer**: A curated database of 377 assessments enriched with detailed descriptions, durations, and support features (Adaptive/Remote).
+1.  **Data Layer**: A curated database of 377 assessments with descriptions, durations, and support features (Adaptive/Remote).
 2.  **Retrieval Layer**: A two-stage process using **FAISS** for semantic similarity and **BM25** for exact match relevance.
-3.  **Balance Layer**: An intent-classification logic that detects if a query implies technical skills, behavioral traits, or both, and adjusts retrieval weights accordingly.
-4.  **API Layer**: High-performance **FastAPI** backend supporting standardized endpoints for seamless frontend integration.
+3.  **Balance Layer**: An intent-classification layer that checks whether a query is about technical skills, behavioral traits, or both, and adjusts retrieval weights accordingly.
+4.  **API Layer**: FastAPI backend exposing standardized endpoints that are easy to plug into a frontend.
 
 ### 2.2 Technology Stack
 | Component | Technology | Rationale |
@@ -76,6 +76,6 @@ Through grid-search tuning of weights, we discovered that a **0.7 Semantic / 0.3
 
 ## 6. Conclusion & Results
 
-The finalized SHL Assessment Recommendation System achieves a **Mean Recall@10 of 0.5500**, representing a **23.3% relative improvement** over the initial baseline. The system is robust, handles structural URL variations elegantly, and provides a "Premium" end-user experience through its responsive dashboard and standardized API. 
+The finalized SHL Assessment Recommendation System achieves a **Mean Recall@10 of 0.5500**, representing a **23.3% relative improvement** over the initial baseline. The system is reliable, handles structural URL variations cleanly, and provides a polished end-user experience through its responsive dashboard and standardized API. 
 
 This journey demonstrates that for technical recommendation systems, a **Hybrid Search + Normalization** strategy is vital for bridging the gap between human user intent and raw catalog data.

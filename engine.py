@@ -148,10 +148,10 @@ class RecommendationEngine:
             if bm25_scores[idx] > 0:
                 logger.info(f"  {i+1}. Score: {bm25_scores[idx]:.4f} | {self.df.iloc[idx]['name']}")
         
-        # 3. Hybrid Reranking with Keyword Boost
+        # 3. Hybrid reranking with a keyword boost
         combined_scores = {}
         
-        # Robust Normalization:
+        # More stable normalization:
         # Use min-max scaling over the returned distances to avoid tiny spreads
         # causing large relative differences that can over-favor certain items (e.g., Java).
         max_dist = float(np.max(distances)) if np.max(distances) > 0 else 1.0

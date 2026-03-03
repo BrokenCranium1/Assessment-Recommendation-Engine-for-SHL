@@ -6,7 +6,7 @@ I have completed the development of the SHL Assessment Recommendation System. Be
 - **Full Data Pipeline**: Scraped and enriched 377+ SHL assessments with detailed metadata.
 - **Hybrid Search Engine**: Combines semantic meaning with keyword precision.
 - **FastAPI Backend**: Fully functional API following the assignment spec.
-- **Premium UI**: Modern, glassmorphism-based web interface for easy testing.
+- **Polished UI**: Modern, glassmorphism-based web interface for easy testing.
 - **Automated Evaluation**: Scripted Mean Recall@10 measurement and test set prediction generation.
 
 ## 🛠️ Verification Results
