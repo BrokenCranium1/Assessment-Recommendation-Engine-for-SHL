@@ -1,17 +1,54 @@
 from fastapi import FastAPI
 import os
 import logging
-from engine import RecommendationEngine  # Add this
+from engine import RecommendationEngine
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
+# Try multiple possible paths for the catalog file
+def find_catalog_file():
+    possible_paths = [
+        "data/shl_catalog_final.csv",           # Local development
+        "/app/data/shl_catalog_final.csv",       # Docker default
+        "./data/shl_catalog_final.csv",          # Relative with dot
+        "../data/shl_catalog_final.csv",         # Parent directory
+        os.path.join(os.path.dirname(__file__), "data", "shl_catalog_final.csv"),  # Same dir as script
+        os.path.join("/app", "data", "shl_catalog_final.csv"),  # Explicit /app path
+    ]
+    
+    for path in possible_paths:
+        if os.path.exists(path):
+            logger.info(f"✅ Found catalog at: {path}")
+            return path
+    
+    # If not found, list directory contents for debugging
+    logger.error("❌ Catalog file not found in any expected location")
+    try:
+        logger.info(f"Current directory: {os.getcwd()}")
+        logger.info(f"Files in current directory: {os.listdir('.')}")
+        if os.path.exists('data'):
+            logger.info(f"Files in ./data: {os.listdir('data')}")
+        if os.path.exists('/app'):
+            logger.info(f"Files in /app: {os.listdir('/app')}")
+        if os.path.exists('/app/data'):
+            logger.info(f"Files in /app/data: {os.listdir('/app/data')}")
+    except Exception as e:
+        logger.error(f"Error listing directories: {e}")
+    
+    return None
+
 # Try loading engine at startup
 try:
     logger.info("Attempting to load engine...")
-    engine = RecommendationEngine("data/shl_catalog_final.csv")
+    catalog_path = find_catalog_file()
+    
+    if catalog_path is None:
+        raise FileNotFoundError("Could not find catalog file in any expected location")
+    
+    engine = RecommendationEngine(catalog_path)
     logger.info("✅ Engine loaded successfully!")
 except Exception as e:
     logger.error(f"❌ Engine failed to load: {e}")
@@ -19,13 +56,16 @@ except Exception as e:
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "engine_loaded": engine is not None}
+    return {
+        "status": "healthy", 
+        "engine_loaded": engine is not None,
+        "catalog_found": catalog_path if 'catalog_path' in locals() else None
+    }
 
 @app.get("/")
 async def root():
     return {"message": "SHL Recommendation API"}
 
-# Keep your working minimal endpoint for now
 @app.post("/recommend")
 async def recommend(query: str = "java developer"):
     if engine is None:
