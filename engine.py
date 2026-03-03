@@ -9,6 +9,7 @@ from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 import json
 import re
+import pickle  # Added for loading embeddings
 
 # Force CPU mode to prevent GPU memory usage
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
@@ -52,17 +53,53 @@ class RecommendationEngine:
         logger.info(f"Engine initialized with {len(self.df)} records. Model will load on first request.")
 
     def _lazy_load_model(self):
-        """Load model and create embeddings only when first needed"""
+        """Load pre-computed embeddings instead of computing them from scratch"""
         if self._model_loaded:
             return
             
-        logger.info("🔄 Lazy-loading model on first request (this may take 5-10 seconds)...")
+        logger.info("🔄 Loading pre-computed embeddings...")
+        
+        try:
+            # Check if embeddings file exists
+            embeddings_path = 'data/embeddings.pkl'
+            if not os.path.exists(embeddings_path):
+                logger.error(f"❌ Embeddings file not found at {embeddings_path}")
+                logger.error("Falling back to slow embedding computation...")
+                return self._compute_embeddings_fallback()
+            
+            # Load pre-computed embeddings
+            with open(embeddings_path, 'rb') as f:
+                data = pickle.load(f)
+                self.embeddings = data['embeddings']
+                logger.info(f"✅ Loaded {len(self.embeddings)} pre-computed embeddings")
+            
+            # Still need the model for encoding queries
+            logger.info("🔄 Loading ML model for query encoding...")
+            self.embed_model = SentenceTransformer('paraphrase-albert-small-v2')
+            
+            # Initialize FAISS index
+            dimension = self.embeddings.shape[1]
+            self.index = faiss.IndexFlatL2(dimension)
+            self.index.add(np.array(self.embeddings).astype('float32'))
+            
+            self._model_loaded = True
+            memory_used = self.embeddings.nbytes / 1024 / 1024
+            logger.info(f"✅ Ready! Embeddings use {memory_used:.2f}MB in memory")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to load embeddings: {e}")
+            logger.info("Falling back to slow embedding computation...")
+            self._compute_embeddings_fallback()
+
+    def _compute_embeddings_fallback(self):
+        """Fallback method that computes embeddings (slow) - only used if pre-computed file missing"""
+        logger.info("⚠️ Computing embeddings from scratch (this will be slow)...")
         
         # Load the small model
         self.embed_model = SentenceTransformer('paraphrase-albert-small-v2')
         
         # Process in very small batches to manage memory
-        batch_size = 16  # Smaller batches = less memory spike
+        batch_size = 16
         all_embeddings = []
         texts = self.df['combined_text'].tolist()
         total_batches = (len(texts) - 1) // batch_size + 1
@@ -230,4 +267,4 @@ if __name__ == "__main__":
     print("="*50)
     recs = engine.get_balanced_recommendations("Team collaboration skills", top_k=5)
     for r in recs:
-        print(f"✅ {r['name']} ({r['test_type']})") 
+        print(f"✅ {r['name']} ({r['test_type']})")
