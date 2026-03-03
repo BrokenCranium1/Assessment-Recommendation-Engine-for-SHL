@@ -72,18 +72,57 @@ async def recommend(query: str = "java developer"):
         return {"error": "Engine not loaded"}
     
     try:
-        # Try using the real engine
-        results = engine.get_balanced_recommendations(query, top_k=3)
-        return results
+        # Get raw results from engine
+        raw_results = engine.get_balanced_recommendations(query, top_k=5)
+        
+        # Format results to match PDF Appendix 2 EXACTLY
+        formatted_results = []
+        for r in raw_results:
+            # Handle test_type - ensure it's always a list
+            test_type = r.get("test_type", "K")
+            if isinstance(test_type, str):
+                # If it's a comma-separated string, split it
+                if "," in test_type:
+                    test_type_list = [t.strip() for t in test_type.split(",")]
+                else:
+                    test_type_list = [test_type]
+            elif isinstance(test_type, list):
+                test_type_list = test_type
+            else:
+                test_type_list = ["K"]
+            
+            # Ensure duration is integer
+            try:
+                duration_val = r.get("duration", 0)
+                if duration_val is None:
+                    duration = 0
+                else:
+                    duration = int(float(duration_val))
+            except (ValueError, TypeError):
+                duration = 0
+            
+            # Create clean response object with ONLY the 7 required fields
+            formatted_results.append({
+                "url": r.get("url", ""),
+                "name": r.get("name", ""),
+                "adaptive_support": r.get("adaptive_support", "No"),
+                "description": r.get("description", ""),
+                "duration": duration,
+                "remote_support": r.get("remote_support", "No"),
+                "test_type": test_type_list
+            })
+        
+        return formatted_results[:5]  # Ensure max 5 results
+        
     except Exception as e:
         logger.error(f"Recommendation failed: {e}")
-        # Fallback to dummy data
+        # Fallback to dummy data that matches the required format
         return [
             {
                 "url": "https://example.com/test",
                 "name": f"Test for: {query}",
                 "adaptive_support": "No",
-                "description": "Fallback response",
+                "description": "Fallback response - engine error",
                 "duration": 30,
                 "remote_support": "Yes",
                 "test_type": ["K"]
