@@ -9,7 +9,8 @@ from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 import json
 import re
-import pickle  # Added for loading embeddings
+import pickle
+import traceback  # Added for better error logging
 
 # Force CPU mode to prevent GPU memory usage
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
@@ -266,6 +267,11 @@ class RecommendationEngine:
         search_k = max(top_k * 3, 15)
         raw_results = self.search(query, top_k=search_k)
         
+        # Log what we found before Gemini
+        python_count = sum(1 for r in raw_results[:20] if 'python' in r['name'].lower())
+        java_count = sum(1 for r in raw_results[:20] if 'java' in r['name'].lower())
+        logger.info(f"Before Gemini - Python: {python_count}, Java: {java_count} in top 20")
+        
         # If no API key, fall back to keyword-based balancing
         if not api_key:
             logger.warning("⚠️ No Gemini API key - using keyword fallback")
@@ -279,42 +285,56 @@ class RecommendationEngine:
             logger.info("🤖 Using Gemini for intelligent reranking")
             genai.configure(api_key=api_key)
             
-            # Using Gemini 2.5 Flash-Lite for fast, cost-effective reranking
+            # Using Gemini 2.5 Flash-Lite
             model = genai.GenerativeModel('gemini-2.5-flash-lite')
             
-            # Prepare context (limit to 20 results to avoid token limits)
+            # Prepare RICH context with FULL details including descriptions
             context_items = raw_results[:20]
-            context = "\n".join([
-                f"- {r['name']} (Type: {r['test_type']}, URL: {r['url']})"
-                for r in context_items
-            ])
+            context_parts = []
+            for i, r in enumerate(context_items, 1):
+                # Truncate description but keep enough for language detection
+                desc = r['description'][:300] if r['description'] else "No description available"
+                context_parts.append(
+                    f"Assessment {i}:\n"
+                    f"Name: {r['name']}\n"
+                    f"Type: {r['test_type']}\n"
+                    f"Description: {desc}\n"
+                    f"URL: {r['url']}"
+                )
+            context = "\n\n".join(context_parts)
             
-            # 🔥 IMPROVED PROMPT with explicit language matching instructions
+            # Log sample for debugging
+            logger.info(f"Sending {len(context_items)} assessments to Gemini")
+            if context_items:
+                logger.info(f"Sample: {context_items[0]['name']} - {context_items[0]['description'][:100]}...")
+            
             prompt = f"""You are an expert SHL assessment consultant. Your task is to recommend the most relevant assessments for a given query.
 
 QUERY: "{query}"
 
-🔴 CRITICAL LANGUAGE MATCHING INSTRUCTIONS:
-- If the query mentions "Python", you MUST prioritize assessments containing "Python" in the name
-- If the query mentions "Java", prioritize assessments with "Java" in the name
-- If the query mentions "JavaScript" or "JS", prioritize JavaScript assessments
-- If the query mentions "SQL" or "database", prioritize SQL/database assessments
-- If the query mentions "C#" or ".NET", prioritize .NET/C# assessments
-- If the query mentions specific frameworks (Spring, React, Angular, etc.), prioritize those
+🔴 CRITICAL INSTRUCTION - READ CAREFULLY:
+The query mentions a specific programming language. You MUST prioritize assessments that test that language.
 
-Here are the available assessments with their names, types, and URLs:
+For example:
+- If query contains "Python", assessments with "Python" in the name or description are HIGHEST priority
+- If query contains "Java", assessments with "Java" in the name or description are HIGHEST priority
+- If query contains "JavaScript", prioritize JavaScript assessments
+- If query contains "SQL", prioritize SQL/database assessments
+
+Here are the available assessments with their FULL details (name, type, description, URL):
 
 {context}
 
 INSTRUCTIONS:
-1. Select the {top_k} most relevant assessments for this query
-2. Return ONLY a JSON array of the assessment URLs in order of relevance
-3. If the query mentions BOTH technical and soft skills (e.g., "Java developer who collaborates"), ensure a balanced mix of:
+1. First, identify the primary skill/language in the query: "{query}"
+2. Select the {top_k} most relevant assessments
+3. Return ONLY a JSON array of the assessment URLs in order of relevance
+4. If the query mentions both technical and soft skills, ensure a balanced mix:
    - Technical assessments (Type K)
    - Behavioral assessments (Type P)
-4. CRITICAL: When a specific programming language is mentioned, assessments containing that language in their name MUST appear in the results
+5. CRITICAL: Assessments containing the exact language name in their title or description MUST be prioritized
 
-Example output format: ["url1", "url2", "url3"]
+Example output format: ["url1", "url2", "url3", "url4", "url5"]
 
 Return only the JSON array, no other text."""
             
@@ -338,13 +358,17 @@ Return only the JSON array, no other text."""
                     gemini_results.append(url_to_record[url])
             
             if gemini_results:
-                logger.info(f"✅ Gemini returned {len(gemini_results)} recommendations")
+                # Log what Gemini returned
+                python_final = sum(1 for r in gemini_results if 'python' in r['name'].lower())
+                java_final = sum(1 for r in gemini_results if 'java' in r['name'].lower())
+                logger.info(f"✅ Gemini returned {len(gemini_results)} recommendations - Python: {python_final}, Java: {java_final}")
                 return gemini_results
             else:
                 logger.warning("⚠️ Gemini returned no valid URLs, using fallback")
                 
         except Exception as e:
             logger.error(f"❌ Gemini reranking failed: {e}")
+            traceback.print_exc()
         
         # Fallback to keyword balancing if Gemini fails
         logger.warning("⚠️ Falling back to keyword balancing")
