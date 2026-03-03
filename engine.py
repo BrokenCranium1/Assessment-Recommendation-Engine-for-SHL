@@ -23,29 +23,42 @@ class RecommendationEngine:
     def __init__(self, catalog_path: str):
         self.catalog_path = catalog_path
         self.df = pd.read_csv(catalog_path)
+        # Fill NaN and create a rich combined_text for better keyword matching
         self.df['description'] = self.df['description'].fillna('')
-        self.df['combined_text'] = self.df['name'] + " " + self.df['description'] + " " + self.df['test_type']
         
-        # Initialize BM25 for keyword search (lightweight)
+        # ENHANCED: Add implicit keywords if they are missing from name/description
+        def enrich_text(row):
+            text = f"{row['name']} {row['description']} {row['test_type']}"
+            name_lower = str(row['name']).lower()
+            # If it's a technical test (K) and doesn't have common keywords, add them
+            if 'K' in str(row['test_type']):
+                if 'developer' not in name_lower and 'coding' not in name_lower:
+                    text += " developer coding technical programming"
+            return text
+            
+        self.df['combined_text'] = self.df.apply(enrich_text, axis=1)
+        
+        # Initialize BM25 for keyword search
         tokenized_corpus = [doc.lower().split() for doc in self.df['combined_text'].tolist()]
         self.bm25 = BM25Okapi(tokenized_corpus)
         
-        # Keywords for intent detection (fallback only)
+        # Expanded keywords for better intent detection
         self.technical_keywords = [
             'java', 'python', 'sql', 'javascript', 'coding', 'developer', 
             'programming', 'engineer', 'technical', 'backend', 'frontend',
             'full stack', 'database', 'api', 'algorithm', 'data structure',
-            'aws', 'azure', 'cloud', 'devops', 'software', 'code'
+            'aws', 'azure', 'cloud', 'devops', 'software', 'code', 'react',
+            'angular', 'node', 'typescript', 'c#', 'c++', 'ruby', 'php'
         ]
         
         self.behavioral_keywords = [
             'collaborat', 'team', 'communicat', 'lead', 'interpersonal',
             'soft', 'behavior', 'personality', 'attitude', 'cultural',
             'teamwork', 'leadership', 'management', 'emotional', 'empathy',
-            'conflict', 'negotiat', 'present', 'verbal', 'written'
+            'conflict', 'negotiat', 'present', 'verbal', 'written', 'working information'
         ]
         
-        # CRITICAL FIX: Don't load model at startup - lazy load on first request
+        # Model lazy loading setup...
         self.embed_model = None
         self.embeddings = None
         self.index = None
@@ -60,149 +73,132 @@ class RecommendationEngine:
             
         logger.info("🔄 Loading pre-computed embeddings...")
         
-        # 🔍 DEBUGGING - SHOW ALL FILES AND PATHS
-        import os
-        logger.info(f"Current working directory: {os.getcwd()}")
-        logger.info(f"Files in root directory: {os.listdir('.')}")
-        
-        # Check data directory
-        if os.path.exists('data'):
-            logger.info(f"Files in ./data directory: {os.listdir('data')}")
-        else:
-            logger.info("❌ ./data directory does NOT exist!")
-            
-        # Check app directory (Docker often uses /app)
-        if os.path.exists('/app'):
-            logger.info(f"Files in /app directory: {os.listdir('/app')}")
-            if os.path.exists('/app/data'):
-                logger.info(f"Files in /app/data directory: {os.listdir('/app/data')}")
-        
         try:
-            # List of possible paths to try
+            # Check for embeddings.pkl in multiple common locations
             possible_paths = [
                 'data/embeddings.pkl',
                 './data/embeddings.pkl',
                 'embeddings.pkl',
-                './embeddings.pkl',
                 '/app/data/embeddings.pkl',
-                '/app/embeddings.pkl',
                 os.path.join(os.path.dirname(__file__), 'data', 'embeddings.pkl'),
-                os.path.join(os.path.dirname(__file__), 'embeddings.pkl'),
             ]
             
-            embeddings_path = None
-            for path in possible_paths:
-                logger.info(f"Checking path: {path}")
-                if os.path.exists(path):
-                    embeddings_path = path
-                    logger.info(f"✅ Found embeddings at: {path}")
-                    break
+            embeddings_path = next((p for p in possible_paths if os.path.exists(p)), None)
             
-            if embeddings_path is None:
-                logger.error("❌ No embeddings file found in any of the checked paths!")
-                logger.error("Falling back to slow embedding computation...")
+            if not embeddings_path:
+                logger.error("❌ No embeddings file found! Falling back to slow computation...")
                 return self._compute_embeddings_fallback()
             
-            # Load pre-computed embeddings
             with open(embeddings_path, 'rb') as f:
                 data = pickle.load(f)
                 
-            # Handle different pickle formats
             if isinstance(data, dict) and 'embeddings' in data:
                 self.embeddings = data['embeddings']
-            elif isinstance(data, np.ndarray):
-                self.embeddings = data
             else:
-                logger.error(f"❌ Unexpected pickle format: {type(data)}")
-                return self._compute_embeddings_fallback()
+                self.embeddings = data
                 
-            logger.info(f"✅ Loaded {len(self.embeddings)} pre-computed embeddings")
-            
-            # Still need the model for encoding queries
-            logger.info("🔄 Loading ML model for query encoding...")
             self.embed_model = SentenceTransformer('paraphrase-albert-small-v2')
             
-            # Initialize FAISS index
             dimension = self.embeddings.shape[1]
             self.index = faiss.IndexFlatL2(dimension)
             self.index.add(np.array(self.embeddings).astype('float32'))
             
             self._model_loaded = True
-            memory_used = self.embeddings.nbytes / 1024 / 1024
-            logger.info(f"✅ Ready! Embeddings use {memory_used:.2f}MB in memory")
+            logger.info(f"✅ Loaded {len(self.embeddings)} embeddings.")
             
         except Exception as e:
             logger.error(f"❌ Failed to load embeddings: {e}")
-            logger.info("Falling back to slow embedding computation...")
             self._compute_embeddings_fallback()
 
     def _compute_embeddings_fallback(self):
-        """Fallback method that computes embeddings (slow) - only used if pre-computed file missing"""
-        logger.info("⚠️ Computing embeddings from scratch (this will be slow)...")
-        
-        # Load the small model
+        """Fallback method that computes embeddings (slow)"""
+        logger.info("⚠️ Computing embeddings from scratch...")
         self.embed_model = SentenceTransformer('paraphrase-albert-small-v2')
-        
-        # Process in very small batches to manage memory
-        batch_size = 16
-        all_embeddings = []
         texts = self.df['combined_text'].tolist()
-        total_batches = (len(texts) - 1) // batch_size + 1
+        self.embeddings = self.embed_model.encode(texts, show_progress_bar=True)
         
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i:i+batch_size]
-            batch_embeddings = self.embed_model.encode(batch, show_progress_bar=False)
-            all_embeddings.append(batch_embeddings)
-            logger.info(f"  Processed batch {i//batch_size + 1}/{total_batches}")
-        
-        self.embeddings = np.vstack(all_embeddings)
-        
-        # Initialize FAISS index
         dimension = self.embeddings.shape[1]
         self.index = faiss.IndexFlatL2(dimension)
         self.index.add(np.array(self.embeddings).astype('float32'))
-        
         self._model_loaded = True
-        memory_used = self.embeddings.nbytes / 1024 / 1024
-        logger.info(f"✅ Model loading complete. Embeddings use {memory_used:.2f}MB.")
 
     def search(self, query: str, top_k: int = 20) -> List[Dict[str, Any]]:
-        # Ensure model is loaded before searching
         self._lazy_load_model()
+        query_lower = query.lower()
         
         # 1. Semantic Search (Dense)
         query_embedding = self.embed_model.encode([query])
         distances, indices = self.index.search(np.array(query_embedding).astype('float32'), top_k)
         
+        # Log top 3 Semantic matches
+        logger.info(f"🔍 Top 3 Semantic matches for '{query}':")
+        for i in range(min(3, len(indices[0]))):
+            idx = indices[0][i]
+            logger.info(f"  {i+1}. Dist: {distances[0][i]:.4f} | {self.df.iloc[idx]['name']}")
+        
         # 2. Keyword Search (Sparse)
-        tokenized_query = query.lower().split()
+        tokenized_query = query_lower.split()
         bm25_scores = self.bm25.get_scores(tokenized_query)
         bm25_indices = np.argsort(bm25_scores)[::-1][:top_k]
         
-        # 3. Hybrid Reranking - FIXED WEIGHTS to prioritize keyword matching!
+        # Log top 3 BM25 matches
+        logger.info(f"🔍 Top 3 BM25 matches for '{query}':")
+        for i in range(min(3, len(bm25_indices))):
+            idx = bm25_indices[i]
+            if bm25_scores[idx] > 0:
+                logger.info(f"  {i+1}. Score: {bm25_scores[idx]:.4f} | {self.df.iloc[idx]['name']}")
+        
+        # 3. Hybrid Reranking with Keyword Boost
         combined_scores = {}
         
-        # Normalize FAISS distances (lower is better, convert to score)
+        # Robust Normalization
+        # Use a larger sample for distance normalization to avoid inflating tiny spreads
         max_dist = np.max(distances) if np.max(distances) > 0 else 1
+        # Min distance in the top results (usually best)
+        min_dist = np.min(distances)
+        
         for i, idx in enumerate(indices[0]):
+            # 1 - normalized distance (0-1 range)
+            # Use distance relative to min/max spread if possible, or simple max ratio
             score = 1 - (distances[0][i] / max_dist)
-            # REDUCED semantic weight to 0.3 (was 0.6)
             combined_scores[idx] = combined_scores.get(idx, 0) + score * 0.3
             
-        # Normalize BM25 scores
         max_bm25 = np.max(bm25_scores) if np.max(bm25_scores) > 0 else 1
         for idx in bm25_indices:
             score = bm25_scores[idx] / max_bm25
-            # INCREASED keyword weight to 0.7 (was 0.4)
             combined_scores[idx] = combined_scores.get(idx, 0) + score * 0.7
+            
+        # --- NEW: APPLY KEYWORD BOOST TO ALL CANDIDATES ---
+        # Iterate over all indices added to combined_scores so far (top semantic + top BM25)
+        for idx in list(combined_scores.keys()):
+            name_lower = str(self.df.iloc[idx]['name']).lower()
+            combined_text_lower = str(self.df.iloc[idx]['combined_text']).lower()
+            
+            for word in tokenized_query:
+                if len(word) < 3: continue
+                
+                # Big boost for direct name match
+                if word in name_lower:
+                    combined_scores[idx] += 1.0  # Double the score impact
+                    logger.info(f"🚀 NAME MATCH BOOST: '{word}' in '{self.df.iloc[idx]['name']}'")
+                    break
+                # Smaller boost for presence in enriched text (case where semantic missed it)
+                elif word in combined_text_lower:
+                    combined_scores[idx] += 0.3
+                    logger.info(f"✨ TEXT MATCH BOOST: '{word}' in '{self.df.iloc[idx]['name']}'")
+                    break
             
         # Sort and get top results
         sorted_indices = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
+        
+        logger.info(f"📊 Final Top Hybrid Scores (Query: '{query}'):")
         results = []
-        for idx, score in sorted_indices[:top_k]:
+        for i, (idx, score) in enumerate(sorted_indices[:10]):
             item = self.df.iloc[idx].to_dict()
             item['score'] = float(score)
             results.append(item)
+            if i < 10:
+                logger.info(f"  {i+1}. Total: {score:.4f} | {item['name']}")
             
         return results
 

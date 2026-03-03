@@ -22,8 +22,18 @@ model = SentenceTransformer('paraphrase-albert-small-v2')
 print("\n🔄 Loading catalog...")
 df = pd.read_csv('data/shl_catalog_final.csv')
 df['description'] = df['description'].fillna('')
-df['combined_text'] = df['name'] + " " + df['description'] + " " + df['test_type']
-print(f"✅ Loaded {len(df)} assessments")
+
+# ENHANCED: Add implicit keywords (match logic in engine.py)
+def enrich_text(row):
+    text = f"{row['name']} {row['description']} {row['test_type']}"
+    name_lower = str(row['name']).lower()
+    if 'K' in str(row['test_type']):
+        if 'developer' not in name_lower and 'coding' not in name_lower:
+            text += " developer coding technical programming"
+    return text
+
+df['combined_text'] = df.apply(enrich_text, axis=1)
+print(f"✅ Loaded {len(df)} assessments with enrichment")
 
 print("\n🔄 Generating embeddings (this takes 2-3 minutes)...")
 embeddings = model.encode(df['combined_text'].tolist(), show_progress_bar=True)
