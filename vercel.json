@@ -1,37 +1,14 @@
 {
-    "functions": {
-      "api/index.py": {
-        "excludeFiles": "{.venv/**,venv/**,env/**,__pycache__/**,*.pyc,.git/**,data/**,scripts/**,docs/**,.cache/**,.huggingface/**,torch_cache/**,**/*.csv,**/*.xlsx,**/test_*.py,**/tests/**}"
-      }
-    },
     "builds": [
       {
-        "src": "api/index.py",
-        "use": "@vercel/python"
+        "src": "index.html",
+        "use": "@vercel/static"
       }
     ],
     "routes": [
       {
         "src": "/(.*)",
-        "dest": "api/index.py"
-      }
-    ]
-  }{
-    "functions": {
-      "api/index.py": {
-        "excludeFiles": "{.venv/**,venv/**,env/**,__pycache__/**,*.pyc,.git/**,data/**,scripts/**,docs/**,.cache/**,.huggingface/**,torch_cache/**,**/*.csv,**/*.xlsx,**/test_*.py,**/tests/**}"
-      }
-    },
-    "builds": [
-      {
-        "src": "api/index.py",
-        "use": "@vercel/python"
-      }
-    ],
-    "routes": [
-      {
-        "src": "/(.*)",
-        "dest": "api/index.py"
+        "dest": "/index.html"
       }
     ]
   }
