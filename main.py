@@ -8,6 +8,10 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
+# Global variable to store catalog path
+catalog_path = None
+engine = None
+
 # Try multiple possible paths for the catalog file
 def find_catalog_file():
     possible_paths = [
@@ -43,23 +47,27 @@ def find_catalog_file():
 # Try loading engine at startup
 try:
     logger.info("Attempting to load engine...")
-    catalog_path = find_catalog_file()
+    found_path = find_catalog_file()
     
-    if catalog_path is None:
+    if found_path is None:
         raise FileNotFoundError("Could not find catalog file in any expected location")
     
-    engine = RecommendationEngine(catalog_path)
+    # Save to global variable
+    catalog_path = found_path
+    
+    engine = RecommendationEngine(found_path)
     logger.info("✅ Engine loaded successfully!")
 except Exception as e:
     logger.error(f"❌ Engine failed to load: {e}")
     engine = None
+    catalog_path = None
 
 @app.get("/health")
 async def health_check():
     return {
         "status": "healthy", 
         "engine_loaded": engine is not None,
-        "catalog_found": catalog_path if 'catalog_path' in locals() else None
+        "catalog_found": catalog_path
     }
 
 @app.get("/")
@@ -69,7 +77,7 @@ async def root():
 @app.post("/recommend")
 async def recommend(query: str = "java developer"):
     if engine is None:
-        return {"error": "Engine not loaded"}
+        return {"error": "Engine not loaded", "catalog_path": catalog_path}
     
     try:
         # Get raw results from engine
@@ -122,7 +130,7 @@ async def recommend(query: str = "java developer"):
                 "url": "https://example.com/test",
                 "name": f"Test for: {query}",
                 "adaptive_support": "No",
-                "description": "Fallback response - engine error",
+                "description": f"Fallback response - engine error: {str(e)}",
                 "duration": 30,
                 "remote_support": "Yes",
                 "test_type": ["K"]

@@ -1,13 +1,13 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
 # Python cache
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
-# Virtual environment (THIS IS CRITICAL)
-.venv/
-venv/
-env/
 
 # Git
 .git/
@@ -20,12 +20,7 @@ env/
 # Logs
 *.log
 
-# Local data backups
-data/*.csv
-!data/shl_catalog_final.csv  # ONLY keep the final catalog
-!data/test_predictions.csv
-
-# Model cache (often huge)
+# Model cache
 .cache/
 .huggingface/
 torch_cache/
@@ -42,3 +37,6 @@ build/
 # Tests
 tests/
 test_*.py
+
+# DO NOT exclude any CSV files - we want them ALL
+# Removed all data/* exclusions
