@@ -179,20 +179,22 @@ class RecommendationEngine:
         bm25_scores = self.bm25.get_scores(tokenized_query)
         bm25_indices = np.argsort(bm25_scores)[::-1][:top_k]
         
-        # 3. Hybrid Reranking (Simple Weighted Average)
+        # 3. Hybrid Reranking - FIXED WEIGHTS to prioritize keyword matching!
         combined_scores = {}
         
         # Normalize FAISS distances (lower is better, convert to score)
         max_dist = np.max(distances) if np.max(distances) > 0 else 1
         for i, idx in enumerate(indices[0]):
             score = 1 - (distances[0][i] / max_dist)
-            combined_scores[idx] = combined_scores.get(idx, 0) + score * 0.6  # Semantic weight 0.6
+            # REDUCED semantic weight to 0.3 (was 0.6)
+            combined_scores[idx] = combined_scores.get(idx, 0) + score * 0.3
             
         # Normalize BM25 scores
         max_bm25 = np.max(bm25_scores) if np.max(bm25_scores) > 0 else 1
         for idx in bm25_indices:
             score = bm25_scores[idx] / max_bm25
-            combined_scores[idx] = combined_scores.get(idx, 0) + score * 0.4  # Keyword weight 0.4
+            # INCREASED keyword weight to 0.7 (was 0.4)
+            combined_scores[idx] = combined_scores.get(idx, 0) + score * 0.7
             
         # Sort and get top results
         sorted_indices = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
