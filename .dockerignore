@@ -1,0 +1,36 @@
+# Version control
+.git
+.gitignore
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Local data (keep only what's needed)
+data/*.csv
+!data/shl_catalog_final.csv  # Keep only the final catalog
+!data/test_predictions.csv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Local environment
+.env
+.env.local
+
+# Temporary files
+*.tmp
+*.bak
