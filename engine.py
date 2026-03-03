@@ -8,6 +8,7 @@ import faiss
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 import json
+import re
 
 # Force CPU mode to prevent GPU memory usage
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
@@ -26,6 +27,21 @@ class RecommendationEngine:
         # Initialize BM25 for keyword search (lightweight)
         tokenized_corpus = [doc.lower().split() for doc in self.df['combined_text'].tolist()]
         self.bm25 = BM25Okapi(tokenized_corpus)
+        
+        # Keywords for intent detection
+        self.technical_keywords = [
+            'java', 'python', 'sql', 'javascript', 'coding', 'developer', 
+            'programming', 'engineer', 'technical', 'backend', 'frontend',
+            'full stack', 'database', 'api', 'algorithm', 'data structure',
+            'aws', 'azure', 'cloud', 'devops', 'software', 'code'
+        ]
+        
+        self.behavioral_keywords = [
+            'collaborat', 'team', 'communicat', 'lead', 'interpersonal',
+            'soft', 'behavior', 'personality', 'attitude', 'cultural',
+            'teamwork', 'leadership', 'management', 'emotional', 'empathy',
+            'conflict', 'negotiat', 'present', 'verbal', 'written'
+        ]
         
         # CRITICAL FIX: Don't load model at startup - lazy load on first request
         self.embed_model = None
@@ -88,13 +104,13 @@ class RecommendationEngine:
         max_dist = np.max(distances) if np.max(distances) > 0 else 1
         for i, idx in enumerate(indices[0]):
             score = 1 - (distances[0][i] / max_dist)
-            combined_scores[idx] = combined_scores.get(idx, 0) + score * 0.5
+            combined_scores[idx] = combined_scores.get(idx, 0) + score * 0.6  # Semantic weight 0.6
             
         # Normalize BM25 scores
         max_bm25 = np.max(bm25_scores) if np.max(bm25_scores) > 0 else 1
         for idx in bm25_indices:
             score = bm25_scores[idx] / max_bm25
-            combined_scores[idx] = combined_scores.get(idx, 0) + score * 0.5
+            combined_scores[idx] = combined_scores.get(idx, 0) + score * 0.4  # Keyword weight 0.4
             
         # Sort and get top results
         sorted_indices = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
@@ -106,66 +122,112 @@ class RecommendationEngine:
             
         return results
 
+    def _detect_query_intent(self, query: str) -> Dict[str, bool]:
+        """Detect if query needs technical, behavioral, or both"""
+        query_lower = query.lower()
+        
+        # Check for technical keywords
+        needs_technical = any(k in query_lower for k in self.technical_keywords)
+        
+        # Check for behavioral keywords
+        needs_behavioral = any(k in query_lower for k in self.behavioral_keywords)
+        
+        return {
+            'technical': needs_technical,
+            'behavioral': needs_behavioral,
+            'mixed': needs_technical and needs_behavioral
+        }
+
+    def _balance_results(self, results: List[Dict], top_k: int) -> List[Dict]:
+        """Balance results between K-type and P-type assessments"""
+        
+        # Separate results by type
+        k_results = []
+        p_results = []
+        other_results = []
+        
+        for r in results:
+            test_type = str(r.get('test_type', ''))
+            if 'K' in test_type:
+                k_results.append(r)
+            elif 'P' in test_type:
+                p_results.append(r)
+            else:
+                other_results.append(r)
+        
+        # Calculate target counts (at least 40% of each, minimum 1)
+        target_per_type = max(1, int(top_k * 0.4))
+        
+        # Build balanced list
+        balanced = []
+        
+        # Add technical (K-type)
+        balanced.extend(k_results[:target_per_type])
+        
+        # Add behavioral (P-type)
+        balanced.extend(p_results[:target_per_type])
+        
+        # If we have less than top_k, fill with best remaining
+        if len(balanced) < top_k:
+            remaining = top_k - len(balanced)
+            # Combine remaining results (prioritize K and P leftovers)
+            leftovers = k_results[target_per_type:] + p_results[target_per_type:] + other_results
+            balanced.extend(leftovers[:remaining])
+        
+        # If we somehow have more than top_k, trim
+        return balanced[:top_k]
+
     def get_balanced_recommendations(self, query: str, top_k: int = 5, api_key: str = None) -> List[Dict[str, Any]]:
         """
-        Uses LLM to rerank and balance recommendations (Hard vs Soft skills).
+        Returns balanced recommendations mixing technical and behavioral assessments
         """
-        search_k = max(top_k * 3, 15) # Search more to allow for reranking
+        # Get more results than needed to allow for balancing
+        search_k = max(top_k * 3, 15)
         raw_results = self.search(query, top_k=search_k)
         
-        if not api_key:
-             # Fallback to simple top_k if no LLM key provided
-             return raw_results[:top_k]
-
-        # Use Gemini to rerank for balance
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # Detect query intent
+        intent = self._detect_query_intent(query)
+        logger.info(f"Query intent - Technical: {intent['technical']}, Behavioral: {intent['behavioral']}, Mixed: {intent['mixed']}")
         
-        context = "\n".join([
-            f"- Name: {r['name']}, URL: {r['url']}, Type: {r['test_type']}, Desc: {r['description'][:200]}..."
-            for r in raw_results
-        ])
-        
-        prompt = f"""
-        You are an expert recruiter recommending SHL assessments.
-        Query: {query}
-        
-        Candidates:
-        {context}
-        
-        Select the top {top_k} most relevant assessments. 
-        CRITICAL: If the query spans multiple domains (e.g., technical and behavioral), ensure a balanced mix.
-        Test types: K (Knowledge/Skills), P (Personality/Behavior), A (Ability/Aptitude), B (Biodata), C (Competencies), E (Exercises), S (Simulations).
-        
-        Return ONLY a JSON list of objects with the 'url' field from the original list, in order of relevance.
-        Example: ["url1", "url2", ...]
-        """
-        
-        try:
-            response = model.generate_content(prompt)
-            # Clean response text and parse JSON
-            text = response.text.strip()
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0].strip()
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0].strip()
+        # For mixed queries, always balance
+        if intent['mixed']:
+            logger.info("Mixed query detected - applying balance logic")
+            balanced_results = self._balance_results(raw_results, top_k)
             
-            recommended_urls = json.loads(text)
+            # Log the balance for debugging
+            k_count = sum(1 for r in balanced_results if 'K' in str(r.get('test_type', '')))
+            p_count = sum(1 for r in balanced_results if 'P' in str(r.get('test_type', '')))
+            logger.info(f"Balanced results - K: {k_count}, P: {p_count}, Total: {len(balanced_results)}")
             
-            # Map back to full records
-            final_recs = []
-            for url in recommended_urls:
-                match = self.df[self.df['url'] == url]
-                if not match.empty:
-                    final_recs.append(match.iloc[0].to_dict())
-            
-            return final_recs[:top_k]
-        except Exception as e:
-            logger.error(f"LLM Reranking failed: {e}")
-            return raw_results[:top_k]
+            return balanced_results
+        
+        # For non-mixed queries, just return top results
+        logger.info("Single intent query - returning top results")
+        return raw_results[:top_k]
 
 if __name__ == "__main__":
     engine = RecommendationEngine("data/shl_catalog_final.csv")
-    recs = engine.get_balanced_recommendations("Java developer with good communication skills")
+    
+    # Test with mixed query
+    print("\n" + "="*50)
+    print("TESTING MIXED QUERY: Java developer with good communication skills")
+    print("="*50)
+    recs = engine.get_balanced_recommendations("Java developer with good communication skills", top_k=5)
     for r in recs:
-        print(f"{r['name']} ({r['test_type']}) - {r['url']}")
+        print(f"✅ {r['name']} ({r['test_type']})")
+    
+    # Test with pure technical query
+    print("\n" + "="*50)
+    print("TESTING TECHNICAL QUERY: Python developer")
+    print("="*50)
+    recs = engine.get_balanced_recommendations("Python developer", top_k=5)
+    for r in recs:
+        print(f"✅ {r['name']} ({r['test_type']})")
+    
+    # Test with pure behavioral query
+    print("\n" + "="*50)
+    print("TESTING BEHAVIORAL QUERY: Team collaboration skills")
+    print("="*50)
+    recs = engine.get_balanced_recommendations("Team collaboration skills", top_k=5)
+    for r in recs:
+        print(f"✅ {r['name']} ({r['test_type']})") 
