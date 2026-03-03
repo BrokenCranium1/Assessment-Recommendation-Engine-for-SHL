@@ -66,6 +66,16 @@ try:
     catalog_path = found_path
     
     engine = RecommendationEngine(found_path)
+    
+    # 🔑 🔑 🔑 READ API KEY FROM ENVIRONMENT VARIABLE 🔑 🔑 🔑
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
+    if gemini_api_key:
+        # Store the key in the engine object so we can access it later
+        engine.gemini_api_key = gemini_api_key
+        logger.info("✅ Gemini API key loaded from environment variable")
+    else:
+        logger.warning("⚠️ No GEMINI_API_KEY environment variable found. Gemini reranking will be disabled.")
+    
     logger.info("✅ Engine loaded successfully!")
 except Exception as e:
     logger.error(f"❌ Engine failed to load: {e}")
@@ -77,7 +87,8 @@ async def health_check():
     return {
         "status": "healthy", 
         "engine_loaded": engine is not None,
-        "catalog_found": catalog_path
+        "catalog_found": catalog_path,
+        "gemini_configured": hasattr(engine, 'gemini_api_key') if engine else False
     }
 
 @app.get("/")
@@ -95,8 +106,15 @@ async def recommend(query: str = "java developer"):
         return {"error": "Engine not loaded", "catalog_path": catalog_path}
     
     try:
-        # Get raw results from engine
-        raw_results = engine.get_balanced_recommendations(query, top_k=5)
+        # 🔑 Get the API key from engine (if it exists)
+        api_key = getattr(engine, 'gemini_api_key', None)
+        
+        # Get raw results from engine - PASS THE API KEY!
+        raw_results = engine.get_balanced_recommendations(
+            query, 
+            top_k=5, 
+            api_key=api_key  # This passes the key to the engine's method
+        )
         
         # Format results to match PDF Appendix 2 EXACTLY
         formatted_results = []
