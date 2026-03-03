@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 import os
 import logging
 from engine import RecommendationEngine
@@ -7,6 +8,15 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+
+# ✅ ADD CORS MIDDLEWARE - This fixes the 405 OPTIONS errors!
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows ALL methods including OPTIONS
+    allow_headers=["*"],  # Allows all headers
+)
 
 # Global variable to store catalog path
 catalog_path = None
@@ -73,6 +83,11 @@ async def health_check():
 @app.get("/")
 async def root():
     return {"message": "SHL Recommendation API"}
+
+# ✅ Handle OPTIONS requests explicitly (though CORS middleware should handle it)
+@app.options("/recommend")
+async def options_recommend():
+    return {"message": "OK"}
 
 @app.post("/recommend")
 async def recommend(query: str = "java developer"):
