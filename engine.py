@@ -29,7 +29,7 @@ class RecommendationEngine:
         tokenized_corpus = [doc.lower().split() for doc in self.df['combined_text'].tolist()]
         self.bm25 = BM25Okapi(tokenized_corpus)
         
-        # Keywords for intent detection
+        # Keywords for intent detection (fallback only)
         self.technical_keywords = [
             'java', 'python', 'sql', 'javascript', 'coding', 'developer', 
             'programming', 'engineer', 'technical', 'backend', 'frontend',
@@ -260,30 +260,84 @@ class RecommendationEngine:
 
     def get_balanced_recommendations(self, query: str, top_k: int = 5, api_key: str = None) -> List[Dict[str, Any]]:
         """
-        Returns balanced recommendations mixing technical and behavioral assessments
+        Returns intelligent recommendations using Gemini for ALL queries
         """
-        # Get more results than needed to allow for balancing
+        # Get more results than needed
         search_k = max(top_k * 3, 15)
         raw_results = self.search(query, top_k=search_k)
         
-        # Detect query intent
+        # If no API key, fall back to keyword-based balancing
+        if not api_key:
+            logger.warning("⚠️ No Gemini API key - using keyword fallback")
+            intent = self._detect_query_intent(query)
+            if intent['mixed']:
+                return self._balance_results(raw_results, top_k)
+            return raw_results[:top_k]
+        
+        # USE GEMINI FOR INTELLIGENT RERANKING!
+        try:
+            logger.info("🤖 Using Gemini for intelligent reranking")
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            # Prepare context (limit to 20 results to avoid token limits)
+            context_items = raw_results[:20]
+            context = "\n".join([
+                f"- {r['name']} (Type: {r['test_type']}, URL: {r['url']})"
+                for r in context_items
+            ])
+            
+            prompt = f"""You are an expert SHL assessment consultant. Your task is to recommend the most relevant assessments for a given query.
+
+QUERY: "{query}"
+
+Here are the available assessments with their types (K=Knowledge/Skills, P=Personality/Behavior, A=Ability, S=Simulations, E=Exercises):
+
+{context}
+
+INSTRUCTIONS:
+1. Select the {top_k} most relevant assessments for this query
+2. Return ONLY a JSON array of the assessment URLs in order of relevance
+3. If the query mentions both technical and soft skills, ensure a balanced mix of K and P types
+4. Use your understanding to match the query intent, not just keywords
+
+Example output format: ["url1", "url2", "url3"]
+
+Return only the JSON array, no other text."""
+            
+            response = model.generate_content(prompt)
+            
+            # Parse JSON from response
+            text = response.text.strip()
+            # Clean markdown if present
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0].strip()
+            
+            recommended_urls = json.loads(text)
+            
+            # Map URLs back to full records
+            url_to_record = {r['url']: r for r in raw_results}
+            gemini_results = []
+            for url in recommended_urls[:top_k]:
+                if url in url_to_record:
+                    gemini_results.append(url_to_record[url])
+            
+            if gemini_results:
+                logger.info(f"✅ Gemini returned {len(gemini_results)} recommendations")
+                return gemini_results
+            else:
+                logger.warning("⚠️ Gemini returned no valid URLs, using fallback")
+                
+        except Exception as e:
+            logger.error(f"❌ Gemini reranking failed: {e}")
+        
+        # Fallback to keyword balancing if Gemini fails
+        logger.warning("⚠️ Falling back to keyword balancing")
         intent = self._detect_query_intent(query)
-        logger.info(f"Query intent - Technical: {intent['technical']}, Behavioral: {intent['behavioral']}, Mixed: {intent['mixed']}")
-        
-        # For mixed queries, always balance
         if intent['mixed']:
-            logger.info("Mixed query detected - applying balance logic")
-            balanced_results = self._balance_results(raw_results, top_k)
-            
-            # Log the balance for debugging
-            k_count = sum(1 for r in balanced_results if 'K' in str(r.get('test_type', '')))
-            p_count = sum(1 for r in balanced_results if 'P' in str(r.get('test_type', '')))
-            logger.info(f"Balanced results - K: {k_count}, P: {p_count}, Total: {len(balanced_results)}")
-            
-            return balanced_results
-        
-        # For non-mixed queries, just return top results
-        logger.info("Single intent query - returning top results")
+            return self._balance_results(raw_results, top_k)
         return raw_results[:top_k]
 
 if __name__ == "__main__":
