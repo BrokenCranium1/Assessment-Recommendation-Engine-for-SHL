@@ -279,8 +279,7 @@ class RecommendationEngine:
             logger.info("🤖 Using Gemini for intelligent reranking")
             genai.configure(api_key=api_key)
             
-            # ✅ FIXED: Using correct stable model name from Google's documentation
-            # gemini-2.5-flash-lite is the production-ready model for cost-efficient, high-volume tasks [citation:1][citation:5]
+            # Using Gemini 2.5 Flash-Lite for fast, cost-effective reranking
             model = genai.GenerativeModel('gemini-2.5-flash-lite')
             
             # Prepare context (limit to 20 results to avoid token limits)
@@ -290,19 +289,30 @@ class RecommendationEngine:
                 for r in context_items
             ])
             
+            # 🔥 IMPROVED PROMPT with explicit language matching instructions
             prompt = f"""You are an expert SHL assessment consultant. Your task is to recommend the most relevant assessments for a given query.
 
 QUERY: "{query}"
 
-Here are the available assessments with their types (K=Knowledge/Skills, P=Personality/Behavior, A=Ability, S=Simulations, E=Exercises):
+🔴 CRITICAL LANGUAGE MATCHING INSTRUCTIONS:
+- If the query mentions "Python", you MUST prioritize assessments containing "Python" in the name
+- If the query mentions "Java", prioritize assessments with "Java" in the name
+- If the query mentions "JavaScript" or "JS", prioritize JavaScript assessments
+- If the query mentions "SQL" or "database", prioritize SQL/database assessments
+- If the query mentions "C#" or ".NET", prioritize .NET/C# assessments
+- If the query mentions specific frameworks (Spring, React, Angular, etc.), prioritize those
+
+Here are the available assessments with their names, types, and URLs:
 
 {context}
 
 INSTRUCTIONS:
 1. Select the {top_k} most relevant assessments for this query
 2. Return ONLY a JSON array of the assessment URLs in order of relevance
-3. If the query mentions both technical and soft skills, ensure a balanced mix of K and P types
-4. Use your understanding to match the query intent, not just keywords
+3. If the query mentions BOTH technical and soft skills (e.g., "Java developer who collaborates"), ensure a balanced mix of:
+   - Technical assessments (Type K)
+   - Behavioral assessments (Type P)
+4. CRITICAL: When a specific programming language is mentioned, assessments containing that language in their name MUST appear in the results
 
 Example output format: ["url1", "url2", "url3"]
 
