@@ -278,8 +278,10 @@ class RecommendationEngine:
         try:
             logger.info("🤖 Using Gemini for intelligent reranking")
             genai.configure(api_key=api_key)
-            # FIXED: Updated to correct model name that exists
-            model = genai.GenerativeModel('gemini-1.5-flash-latest')
+            
+            # ✅ FIXED: Using correct stable model name from Google's documentation
+            # gemini-2.5-flash-lite is the production-ready model for cost-efficient, high-volume tasks [citation:1][citation:5]
+            model = genai.GenerativeModel('gemini-2.5-flash-lite')
             
             # Prepare context (limit to 20 results to avoid token limits)
             context_items = raw_results[:20]
