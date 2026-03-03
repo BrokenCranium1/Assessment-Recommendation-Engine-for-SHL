@@ -151,16 +151,17 @@ class RecommendationEngine:
         # 3. Hybrid Reranking with Keyword Boost
         combined_scores = {}
         
-        # Robust Normalization
-        # Use a larger sample for distance normalization to avoid inflating tiny spreads
-        max_dist = np.max(distances) if np.max(distances) > 0 else 1
-        # Min distance in the top results (usually best)
-        min_dist = np.min(distances)
+        # Robust Normalization:
+        # Use min-max scaling over the returned distances to avoid tiny spreads
+        # causing large relative differences that can over-favor certain items (e.g., Java).
+        max_dist = float(np.max(distances)) if np.max(distances) > 0 else 1.0
+        min_dist = float(np.min(distances))
+        dist_range = max_dist - min_dist if max_dist > min_dist else 1.0
         
         for i, idx in enumerate(indices[0]):
-            # 1 - normalized distance (0-1 range)
-            # Use distance relative to min/max spread if possible, or simple max ratio
-            score = 1 - (distances[0][i] / max_dist)
+            # Convert distances into similarity in a stable [0,1] range
+            normalized = (distances[0][i] - min_dist) / dist_range
+            score = 1.0 - normalized
             combined_scores[idx] = combined_scores.get(idx, 0) + score * 0.3
             
         max_bm25 = np.max(bm25_scores) if np.max(bm25_scores) > 0 else 1
@@ -168,18 +169,34 @@ class RecommendationEngine:
             score = bm25_scores[idx] / max_bm25
             combined_scores[idx] = combined_scores.get(idx, 0) + score * 0.7
             
-        # --- NEW: APPLY KEYWORD BOOST TO ALL CANDIDATES ---
+        # --- NEW: APPLY KEYWORD & LANGUAGE BOOST TO ALL CANDIDATES ---
         # Iterate over all indices added to combined_scores so far (top semantic + top BM25)
+        # Detect explicit language keywords from the query so we can strongly prioritize them.
+        language_keywords = [
+            "python",
+            "java",
+            "javascript",
+            "typescript",
+            "sql",
+            "c++",
+            "c#",
+            "ruby",
+            "php",
+        ]
+        query_languages = {w for w in tokenized_query if w in language_keywords}
+        has_explicit_language = len(query_languages) > 0
+        
         for idx in list(combined_scores.keys()):
             name_lower = str(self.df.iloc[idx]['name']).lower()
             combined_text_lower = str(self.df.iloc[idx]['combined_text']).lower()
             
+            # General keyword / name boost
             for word in tokenized_query:
                 if len(word) < 3: continue
                 
                 # Big boost for direct name match
                 if word in name_lower:
-                    combined_scores[idx] += 1.0  # Double the score impact
+                    combined_scores[idx] += 1.0
                     logger.info(f"🚀 NAME MATCH BOOST: '{word}' in '{self.df.iloc[idx]['name']}'")
                     break
                 # Smaller boost for presence in enriched text (case where semantic missed it)
@@ -187,6 +204,26 @@ class RecommendationEngine:
                     combined_scores[idx] += 0.3
                     logger.info(f"✨ TEXT MATCH BOOST: '{word}' in '{self.df.iloc[idx]['name']}'")
                     break
+            
+            # Additional explicit language prioritization:
+            # If the query specifies a language (e.g., 'python'), give a large boost
+            # to items whose name contains that language, and slightly down-weight
+            # items that are strongly about other languages when they are not requested.
+            if has_explicit_language:
+                for lang in language_keywords:
+                    in_query = lang in query_languages
+                    in_name = lang in name_lower
+                    in_text = lang in combined_text_lower
+                    
+                    if in_query and (in_name or in_text):
+                        # Strong positive boost for exact language matches mentioned in the query
+                        combined_scores[idx] += 3.0
+                        logger.info(f"🔥 LANGUAGE PRIORITY BOOST: '{lang}' in '{self.df.iloc[idx]['name']}' (query specified this language)")
+                    elif (not in_query) and in_name:
+                        # Mild penalty for other languages not requested, to prevent Java from
+                        # dominating when the user explicitly asked for Python, SQL, etc.
+                        combined_scores[idx] -= 0.5
+                        logger.info(f"⚖️ LANGUAGE DE-EMPHASIS: '{lang}' in '{self.df.iloc[idx]['name']}' (not requested in query)")
             
         # Sort and get top results
         sorted_indices = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
