@@ -1,31 +1,26 @@
-# Use slim Python image (much smaller)
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy requirements first (better caching)
+# Copy requirements first (for caching)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy ONLY what's needed (your .dockerignore will be used!)
+# Copy only the essential files (your .dockerignore will protect you)
 COPY main.py .
 COPY engine.py .
 COPY APPROACH.md .
 COPY WALKTHROUGH.md .
 COPY README.md .
-COPY test_predictions.csv .
+COPY .python-version .
 COPY railpack.json .
 COPY railway.json .
-COPY .python-version .
 
-# Create data directory and copy only final CSV
-RUN mkdir -p data
-COPY data/shl_catalog_final.csv ./data/
-COPY data/test_predictions.csv ./data/
+# Copy the data directory WITH the correct files
+COPY data/ ./data/
 
-# Create scripts directory if needed
-RUN mkdir -p scripts
-COPY scripts/ ./scripts/
+# Verify the files exist (optional - helps debugging)
+RUN ls -la data/
 
 # Port
 EXPOSE 8000
