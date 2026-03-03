@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import os
 import logging
 from engine import RecommendationEngine
@@ -100,19 +101,29 @@ async def root():
 async def options_recommend():
     return {"message": "OK"}
 
+
+class RecommendRequest(BaseModel):
+    query: str = "java developer"
+    top_k: int = 5
+
+
 @app.post("/recommend")
-async def recommend(query: str = "java developer"):
+async def recommend(payload: RecommendRequest):
     if engine is None:
         return {"error": "Engine not loaded", "catalog_path": catalog_path}
     
     try:
+        # Extract query and top_k from JSON body (used by frontend and scripts)
+        query = payload.query or "java developer"
+        top_k = payload.top_k or 5
+        
         # 🔑 Get the API key from engine (if it exists)
         api_key = getattr(engine, 'gemini_api_key', None)
         
         # Get raw results from engine - PASS THE API KEY!
         raw_results = engine.get_balanced_recommendations(
-            query, 
-            top_k=5, 
+            query,
+            top_k=top_k,
             api_key=api_key  # This passes the key to the engine's method
         )
         
