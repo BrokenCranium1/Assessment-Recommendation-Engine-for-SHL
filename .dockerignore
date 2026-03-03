@@ -1,36 +1,44 @@
-# Version control
-.git
-.gitignore
-
 # Python cache
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# Virtual environment
+# Virtual environment (THIS IS CRITICAL)
 .venv/
 venv/
 env/
 
-# Local data (keep only what's needed)
-data/*.csv
-!data/shl_catalog_final.csv  # Keep only the final catalog
-!data/test_predictions.csv
+# Git
+.git/
+.gitignore
 
 # IDE
 .vscode/
 .idea/
-*.swp
-*.swo
 
 # Logs
 *.log
 
-# Local environment
-.env
-.env.local
+# Local data backups
+data/*.csv
+!data/shl_catalog_final.csv  # ONLY keep the final catalog
+!data/test_predictions.csv
 
-# Temporary files
-*.tmp
-*.bak
+# Model cache (often huge)
+.cache/
+.huggingface/
+torch_cache/
+
+# pip cache
+.pip_cache/
+pip-wheel-metadata/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Tests
+tests/
+test_*.py
