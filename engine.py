@@ -59,19 +59,63 @@ class RecommendationEngine:
             
         logger.info("🔄 Loading pre-computed embeddings...")
         
+        # 🔍 DEBUGGING - SHOW ALL FILES AND PATHS
+        import os
+        logger.info(f"Current working directory: {os.getcwd()}")
+        logger.info(f"Files in root directory: {os.listdir('.')}")
+        
+        # Check data directory
+        if os.path.exists('data'):
+            logger.info(f"Files in ./data directory: {os.listdir('data')}")
+        else:
+            logger.info("❌ ./data directory does NOT exist!")
+            
+        # Check app directory (Docker often uses /app)
+        if os.path.exists('/app'):
+            logger.info(f"Files in /app directory: {os.listdir('/app')}")
+            if os.path.exists('/app/data'):
+                logger.info(f"Files in /app/data directory: {os.listdir('/app/data')}")
+        
         try:
-            # Check if embeddings file exists
-            embeddings_path = 'data/embeddings.pkl'
-            if not os.path.exists(embeddings_path):
-                logger.error(f"❌ Embeddings file not found at {embeddings_path}")
+            # List of possible paths to try
+            possible_paths = [
+                'data/embeddings.pkl',
+                './data/embeddings.pkl',
+                'embeddings.pkl',
+                './embeddings.pkl',
+                '/app/data/embeddings.pkl',
+                '/app/embeddings.pkl',
+                os.path.join(os.path.dirname(__file__), 'data', 'embeddings.pkl'),
+                os.path.join(os.path.dirname(__file__), 'embeddings.pkl'),
+            ]
+            
+            embeddings_path = None
+            for path in possible_paths:
+                logger.info(f"Checking path: {path}")
+                if os.path.exists(path):
+                    embeddings_path = path
+                    logger.info(f"✅ Found embeddings at: {path}")
+                    break
+            
+            if embeddings_path is None:
+                logger.error("❌ No embeddings file found in any of the checked paths!")
                 logger.error("Falling back to slow embedding computation...")
                 return self._compute_embeddings_fallback()
             
             # Load pre-computed embeddings
             with open(embeddings_path, 'rb') as f:
                 data = pickle.load(f)
+                
+            # Handle different pickle formats
+            if isinstance(data, dict) and 'embeddings' in data:
                 self.embeddings = data['embeddings']
-                logger.info(f"✅ Loaded {len(self.embeddings)} pre-computed embeddings")
+            elif isinstance(data, np.ndarray):
+                self.embeddings = data
+            else:
+                logger.error(f"❌ Unexpected pickle format: {type(data)}")
+                return self._compute_embeddings_fallback()
+                
+            logger.info(f"✅ Loaded {len(self.embeddings)} pre-computed embeddings")
             
             # Still need the model for encoding queries
             logger.info("🔄 Loading ML model for query encoding...")
